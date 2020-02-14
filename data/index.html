@@ -11,7 +11,7 @@
 </head>
 
 <body onload='GetConfig();'>
-    <h1 id='x'>ESP Relay web app</h1>
+    <h1 id='h1'>ESP Relay</h1>
     <form action="">
         <h3>
             <input type="checkbox" id='chkAuto'>
@@ -32,6 +32,8 @@
         It is ON for <input type="number" id="numMoment" min="1" max="120" id=""> minutes
 
         <input type="button" id='btnOk' value="OK" onclick="SaveConfig()">
+
+        <input type="button" id='btnNameIp' value="Change app name and IP" onclick="ChangeNameIp()">
     </form>
 </body>
 

@@ -7,14 +7,15 @@ h3
 
 #btnOk
 {
-    margin-top: 40px;
-    display: block;
+    width: 70px;
 }
 
 input[type="button"]
 {
-    width: 70px;
+    margin-top: 40px;
+    display: block;
 }
+
 input[type="number"]
 {
     width: 45px;
