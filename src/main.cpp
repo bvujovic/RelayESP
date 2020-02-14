@@ -17,24 +17,28 @@ SNTPtime ntp("rs.pool.ntp.org");
 strDateTime now;
 
 const int pinRelay = D1;
+const int pinBtn = D2;
 
 #define DEBUG true
 
-void GetCurrentTime()
-{
-  while (!ntp.setSNTPtime())
-    if (DEBUG)
-      Serial.print(".");
-  if (DEBUG)
-    Serial.println("\nTime set");
-}
-
+unsigned long msWiFiStarted;                  // vreme ukljucenja WiFi-a
+const unsigned long WIFI_ON_INIT = 5 * 60000; // wifi ce biti ukljucen 5min po paljenju aparata, a onda se gasi
+bool isWiFiOn;                                // da li je wifi ukljucen ili ne
 bool autoOn, momentOn;
 int autoStartHour, autoStartMin, autoEndHour, autoEndMin;
 int momentStartHour, momentStartMin, momentEndHour, momentEndMin;
 String appName; // sta pise u tabu index stranice pored "ESP Relay"
 int ipLastNum;  // poslednji deo IP adrese - broj iza 192.168.0.
 char configFilePath[] = "/dat/config.ini";
+
+void GetCurrentTime()
+{
+  while (!ntp.setSNTPtime())
+    if (DEBUG)
+      Serial.print("*");
+  if (DEBUG)
+    Serial.println(" Time set");
+}
 
 // "01:08" -> 1, 8
 void ParseTime(String s, int &h, int &m)
@@ -136,20 +140,14 @@ void HandleSaveConfig()
   server.send(200, "text/plain", "");
 }
 
-void setup()
+// Konektovanje na WiFi, uzimanje tacnog vremena, postavljanje IP adrese i startovanje veb servera.
+void WiFiOn()
 {
-  digitalWrite(LED_BUILTIN, true);
-  pinMode(pinRelay, OUTPUT);
-  digitalWrite(pinRelay, false);
-
-  Serial.begin(115200);
-  SPIFFS.begin();
-  ReadConfigFile();
-
+  Serial.println("Turning WiFi ON...");
+  WiFi.mode(WIFI_STA);
   ConnectToWiFi();
   GetCurrentTime();
   SetupIPAddress(ipLastNum);
-
   server.on("/", []() { HandleDataFile(server, "/index.html", "text/html"); });
   server.on("/inc/favicon.ico", []() { HandleDataFile(server, "/inc/favicon.ico", "image/x-icon"); });
   server.on("/inc/script.js", []() { HandleDataFile(server, "/inc/script.js", "text/javascript"); });
@@ -157,56 +155,77 @@ void setup()
   server.on("/dat/config.ini", []() { HandleDataFile(server, "/dat/config.ini", "text/x-csv"); });
   server.on("/save_config", HandleSaveConfig);
   server.begin();
-  if (DEBUG)
-    Serial.println("HTTP server started");
+  isWiFiOn = true;
+  msWiFiStarted = millis();
+  Serial.println("WiFi ON");
 }
 
+// Diskonektovanje sa WiFi-a.
 void WiFiOff()
 {
-  Serial.println("\nWiFiOff");
-  //B client.disconnect();
+  isWiFiOn = false;
+  Serial.println("Turning WiFi OFF...");
+  server.stop();
   WiFi.disconnect();
   WiFi.mode(WIFI_OFF);
   WiFi.forceSleepBegin();
   delay(100);
+  Serial.println("WiFi OFF");
 }
 
-const int WIFI_ON_INIT = 5 * 60000; // 5min
-bool wiFiOn = true;
+void setup()
+{
+  digitalWrite(LED_BUILTIN, true);
+  pinMode(pinRelay, OUTPUT);
+  pinMode(pinBtn, INPUT_PULLUP);
+
+  Serial.begin(115200);
+  SPIFFS.begin();
+  ReadConfigFile();
+
+  WiFiOn();
+}
+
+bool btnUp = true;
 
 void loop()
 {
-  if (wiFiOn)
+  now = ntp.getTime(1.0, 1);
+  if (DEBUG && now.second == 0)
   {
-    server.handleClient();
-    now = ntp.getTime(1.0, 1);
-    //T ntp.printDateTime(now);
-
-    // periodicno uzimanje tacnog vremena, tacno u ponoc
-    if (ntp.IsItTime(now, 00, 00, 00))
-    {
-      if (DEBUG)
-        Serial.println("iiiits tiiiiiiiiiiiimeee!");
-      GetCurrentTime();
-    }
-
-    // ukljucivanje/iskljucivanje releja
-    bool isItOn = false;
-    if (autoOn)
-      isItOn = ntp.IsInInterval(now, autoStartHour, autoStartMin, autoEndHour, autoEndMin);
-    if (!isItOn && momentOn)
-      isItOn = ntp.IsInInterval(now, momentStartHour, momentStartMin, momentEndHour, momentEndMin);
-    //T Serial.println(isItOn);
-    digitalWrite(pinRelay, isItOn);
+    ntp.printDateTime(now);
+    delay(1000);
   }
 
-  //  gasenje WiFi-a x minuta posle paljenja aparata
-  if (millis() > WIFI_ON_INIT && wiFiOn)
+  // ukljucivanje/iskljucivanje releja
+  bool isItOn = false;
+  if (autoOn)
+    isItOn = ntp.IsInInterval(now, autoStartHour, autoStartMin, autoEndHour, autoEndMin);
+  if (!isItOn && momentOn)
+    isItOn = ntp.IsInInterval(now, momentStartHour, momentStartMin, momentEndHour, momentEndMin);
+  digitalWrite(pinRelay, isItOn);
+
+  // serverova obrada eventualnog zahteva klijenta i gasenje WiFi-a x minuta posle paljenja aparata
+  if (isWiFiOn)
   {
-    Serial.println("gasim wifi...");
-    server.stop();
-    wiFiOn = false;
-    WiFiOff();
+    server.handleClient();
+    if (millis() > msWiFiStarted + WIFI_ON_INIT)
+      WiFiOff();
+  }
+  else // WiFi OFF
+  {
+    // periodicno uzimanje tacnog vremena, tacno u ponoc
+    if (ntp.IsItTime(now, 00, 00, 00))
+      WiFiOn();
+
+    // na pritisnut taster pali se WiFi
+    bool btnUpNew = digitalRead(pinBtn);
+    if (btnUpNew != btnUp)
+    {
+      btnUp = btnUpNew;
+      if (!btnUp)
+        WiFiOn();
+    }
   }
 
   delay(200);
