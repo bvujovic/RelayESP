@@ -13,7 +13,7 @@
 ESP8266WebServer server(80);
 
 #include <SNTPtime.h>
-SNTPtime ntp("rs.pool.ntp.org");
+SNTPtime ntp;
 strDateTime now;
 
 const int pinRelay = D1;
