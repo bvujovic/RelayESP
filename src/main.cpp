@@ -16,8 +16,8 @@ ESP8266WebServer server(80);
 SNTPtime ntp;
 strDateTime now;
 
-const int pinRelay = D1;
-const int pinBtn = D2;
+const int pinRelay = D1; // pin na koji je povezan relej koji pusta/prekida struju ka kontrolisanom potrosacu
+const int pinBtn = D2;   // (INPUT_PULLUP) pin na koji je vezan taster za startovanje WiFi-a
 
 #define DEBUG true
 
@@ -72,8 +72,9 @@ void ReadConfigFile()
       if (autoOn && name.equals("auto_to"))
         ParseTime(value, autoEndHour, autoEndMin);
 
-      if (name.equals("moment"))
-        momentOn = value.equals("1");
+      //B moment se vise nece pamtiti trajno
+      // if (name.equals("moment"))
+      //   momentOn = value.equals("1");
       if (momentOn && name.equals("moment_from"))
         ParseTime(value, momentStartHour, momentStartMin);
       if (momentOn && name.equals("moment_mins"))
@@ -126,7 +127,9 @@ void HandleSaveConfig()
     WriteParamToFile(fp, "auto");
     WriteParamToFile(fp, "auto_from");
     WriteParamToFile(fp, "auto_to");
-    WriteParamToFile(fp, "moment");
+    //B WriteParamToFile(fp, "moment");
+    // moment (momentOn) se ne cuva trajno vec samo u radnoj memoriji
+    momentOn = server.arg("moment") == "1";
     WriteParamToFile(fp, "moment_from");
     WriteParamToFile(fp, "moment_mins");
     WriteParamToFile(fp, "app_name");
@@ -197,6 +200,14 @@ void loop()
     delay(1000);
   }
 
+  //T
+  // if (now.second % 20 == 0)
+  // {
+  //   Serial.print("moment on: ");
+  //   Serial.println(momentOn);
+  //   delay(1000);
+  // }
+
   // ukljucivanje/iskljucivanje releja
   bool isItOn = false;
   if (autoOn)
@@ -204,6 +215,10 @@ void loop()
   if (!isItOn && momentOn)
     isItOn = ntp.IsInInterval(now, momentStartHour, momentStartMin, momentEndHour, momentEndMin);
   digitalWrite(pinRelay, isItOn);
+
+  // (automatsko) iskljucivanje Moment opcije odmah po isteku moment intervala
+  if (momentOn && ntp.IsItTime(now, momentEndHour, momentEndMin, 00))
+    momentOn = false;
 
   // serverova obrada eventualnog zahteva klijenta i gasenje WiFi-a x minuta posle paljenja aparata
   if (isWiFiOn)
