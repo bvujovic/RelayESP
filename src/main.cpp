@@ -16,20 +16,27 @@ ESP8266WebServer server(80);
 SNTPtime ntp;
 strDateTime now;
 
-const int pinRelay = D1; // pin na koji je povezan relej koji pusta/prekida struju ka kontrolisanom potrosacu
-const int pinBtn = D2;   // (INPUT_PULLUP) pin na koji je vezan taster za startovanje WiFi-a
+#include <EasyINI.h>
+EasyINI ei("/dat/config.ini");
+
+#include <ClickButton.h>
+ClickButton btn(D4, LOW, CLICKBTN_PULLUP); // taster: startovanje WiFi-a, moment-on svetlo
+
+const int pinRelay = D1;        // pin na koji je povezan relej koji pusta/prekida struju ka kontrolisanom potrosacu
+const int pinLed = LED_BUILTIN; // ugradjena LED dioda - prikaz statusa aparata
+//B const int pinBtn = D2;   // (INPUT_PULLUP) pin na koji je vezan taster (startovanje WiFi-a, moment-on svetlo)
 
 #define DEBUG true
 
 unsigned long msWiFiStarted;                  // vreme ukljucenja WiFi-a
 const unsigned long WIFI_ON_INIT = 5 * 60000; // wifi ce biti ukljucen 5min po paljenju aparata, a onda se gasi
 bool isWiFiOn;                                // da li je wifi ukljucen ili ne
+//todo
 bool autoOn, momentOn;
 int autoStartHour, autoStartMin, autoEndHour, autoEndMin;
 int momentStartHour, momentStartMin, momentEndHour, momentEndMin;
 String appName; // sta pise u tabu index stranice pored "ESP Relay"
 int ipLastNum;  // poslednji deo IP adrese - broj iza 192.168.0.
-char configFilePath[] = "/dat/config.ini";
 
 void GetCurrentTime()
 {
@@ -48,53 +55,36 @@ void ParseTime(String s, int &h, int &m)
   m = s.substring(idx + 1).toInt();
 }
 
+// za dati broj minuta, uz momentStartHour i momentStartMin, izracunavaju se vrednosti momentEndHour i momentEndMin
+void CalcMomentEnd(int mins)
+{
+  momentEndMin = (momentStartMin + mins) % 60;
+  int itvHours = (momentStartMin + mins) / 60;
+  momentEndHour = (momentStartHour + itvHours) % 24;
+}
+
 void ReadConfigFile()
 {
-  File fp = SPIFFS.open(configFilePath, "r");
-  if (fp)
+  ei.Open(EasyIniFileMode::Read);
+  autoOn = ei.GetInt("auto", true);
+  if (autoOn)
   {
-    while (fp.available())
-    {
-      String l = fp.readStringUntil('\n');
-      l.trim();
-      if (l.length() == 0 || l.charAt(0) == ';') // preskacemo prazne stringove i komentare
-        continue;                                //
-      int idx = l.indexOf('=');                  // parsiranje reda u formatu "name=value", npr: moment_mins=10
-      if (idx == -1)
-        break;
-      String name = l.substring(0, idx);
-      String value = l.substring(idx + 1);
-
-      if (name.equals("auto"))
-        autoOn = value.equals("1");
-      if (autoOn && name.equals("auto_from"))
-        ParseTime(value, autoStartHour, autoStartMin);
-      if (autoOn && name.equals("auto_to"))
-        ParseTime(value, autoEndHour, autoEndMin);
-
-      //B moment se vise nece pamtiti trajno
-      // if (name.equals("moment"))
-      //   momentOn = value.equals("1");
-      if (momentOn && name.equals("moment_from"))
-        ParseTime(value, momentStartHour, momentStartMin);
-      if (momentOn && name.equals("moment_mins"))
-      {
-        int mins = value.toInt();
-        momentEndMin = (momentStartMin + mins) % 60;
-        int itvHours = (momentStartMin + mins) / 60;
-        momentEndHour = (momentStartHour + itvHours) % 24;
-      }
-      Serial.println(1);
-      if (name.equals("app_name"))
-        appName = value;
-      if (name.equals("ip_last_num"))
-        ipLastNum = value.toInt();
-      Serial.println(2);
-    }
-    fp.close();
+    ParseTime(ei.GetString("auto_from", "12:00"), autoStartHour, autoStartMin);
+    ParseTime(ei.GetString("auto_to", "12:30"), autoEndHour, autoEndMin);
   }
-  else
-    Serial.println("config.ini open (r) faaail.");
+  if (momentOn)
+  {
+    ParseTime(ei.GetString("moment_from", "13:00"), momentStartHour, momentStartMin);
+    CalcMomentEnd(ei.GetInt("moment_mins", 15));
+    //B
+    // momentEndMin = (momentStartMin + mins) % 60;
+    // int itvHours = (momentStartMin + mins) / 60;
+    // momentEndHour = (momentStartHour + itvHours) % 24;
+  }
+  appName = ei.GetString("app_name");
+  ipLastNum = ei.GetInt("ip_last_num");
+  ei.Close();
+
   if (DEBUG)
   {
     Serial.println(autoOn);
@@ -111,34 +101,20 @@ void ReadConfigFile()
   }
 }
 
-void WriteParamToFile(File &fp, const char *pname)
-{
-  fp.print(pname);
-  fp.print('=');
-  fp.println(server.arg(pname));
-}
-
 void HandleSaveConfig()
 {
   // auto=1&auto_from=06:45&auto_to=07:20&moment=1&moment_from=22:59&moment_mins=5
-  File fp = SPIFFS.open(configFilePath, "w");
-  if (fp)
-  {
-    WriteParamToFile(fp, "auto");
-    WriteParamToFile(fp, "auto_from");
-    WriteParamToFile(fp, "auto_to");
-    //B WriteParamToFile(fp, "moment");
-    // moment (momentOn) se ne cuva trajno vec samo u radnoj memoriji
-    momentOn = server.arg("moment") == "1";
-    WriteParamToFile(fp, "moment_from");
-    WriteParamToFile(fp, "moment_mins");
-    WriteParamToFile(fp, "app_name");
-    WriteParamToFile(fp, "ip_last_num");
-    fp.close();
-    ReadConfigFile();
-  }
-  else
-    Serial.println("config.ini open (w) faaail.");
+  ei.Open(EasyIniFileMode::Write);
+  ei.SetString("auto", server.arg("auto"));
+  ei.SetString("auto_from", server.arg("auto_from"));
+  ei.SetString("auto_to", server.arg("auto_to"));
+  momentOn = server.arg("moment") == "1";
+  ei.SetString("moment_from", server.arg("moment_from"));
+  ei.SetString("moment_mins", server.arg("moment_mins"));
+  ei.SetString("app_name", server.arg("app_name"));
+  ei.SetString("ip_last_num", server.arg("ip_last_num"));
+  ei.Close();
+  ReadConfigFile();
 
   server.send(200, "text/plain", "");
 }
@@ -146,13 +122,14 @@ void HandleSaveConfig()
 // Konektovanje na WiFi, uzimanje tacnog vremena, postavljanje IP adrese i startovanje veb servera.
 void WiFiOn()
 {
+  digitalWrite(pinLed, false);
   Serial.println("Turning WiFi ON...");
   WiFi.mode(WIFI_STA);
   ConnectToWiFi();
   GetCurrentTime();
   SetupIPAddress(ipLastNum);
   server.on("/", []() { HandleDataFile(server, "/index.html", "text/html"); });
-  server.on("/inc/favicon.ico", []() { HandleDataFile(server, "/inc/favicon.ico", "image/x-icon"); });
+  server.on("/inc/comp_on-off_btn1.png", []() { HandleDataFile(server, "/inc/comp_on-off_btn1.png", "image/png"); });
   server.on("/inc/script.js", []() { HandleDataFile(server, "/inc/script.js", "text/javascript"); });
   server.on("/inc/style.css", []() { HandleDataFile(server, "/inc/style.css", "text/css"); });
   server.on("/dat/config.ini", []() { HandleDataFile(server, "/dat/config.ini", "text/x-csv"); });
@@ -161,6 +138,7 @@ void WiFiOn()
   isWiFiOn = true;
   msWiFiStarted = millis();
   Serial.println("WiFi ON");
+  digitalWrite(pinLed, true);
 }
 
 // Diskonektovanje sa WiFi-a.
@@ -180,7 +158,10 @@ void setup()
 {
   digitalWrite(LED_BUILTIN, true);
   pinMode(pinRelay, OUTPUT);
-  pinMode(pinBtn, INPUT_PULLUP);
+  pinMode(pinLed, OUTPUT);
+  digitalWrite(pinLed, true);
+  //B pinMode(pinBtn, INPUT_PULLUP);
+  btn.multiclickTime = 500;
 
   Serial.begin(115200);
   SPIFFS.begin();
@@ -189,8 +170,6 @@ void setup()
   WiFiOn();
 }
 
-bool btnUp = true;
-
 void loop()
 {
   now = ntp.getTime(1.0, 1);
@@ -198,6 +177,30 @@ void loop()
   {
     ntp.printDateTime(now);
     delay(1000);
+  }
+
+  btn.Update();
+  if (btn.clicks >= 1) // 1 ili vise kratkih klikova - moment-on paljenje/produzavanje svetla
+  {
+    // potvrda broja klikova brojem blinkova
+    //todo ovo napraviti da ide bez delay()-a mozda metnuti u neku klasu
+    digitalWrite(pinLed, true);
+    delay(500);
+    for (int i = 0; i < btn.clicks; i++)
+    {
+      digitalWrite(pinLed, false);
+      delay(250);
+      digitalWrite(pinLed, true);
+      delay(250);
+    }
+    momentOn = true;
+    momentStartHour = now.hour;
+    momentStartMin = now.minute;
+#ifdef DEBUG
+    CalcMomentEnd(btn.clicks);
+#else
+    CalcMomentEnd(btn.clicks * 10); // svaki klik vredi 10min trajanja moment-on svetla
+#endif
   }
 
   //T
@@ -211,14 +214,29 @@ void loop()
   // ukljucivanje/iskljucivanje releja
   bool isItOn = false;
   if (autoOn)
-    isItOn = ntp.IsInInterval(now, autoStartHour, autoStartMin, autoEndHour, autoEndMin);
+    isItOn = now.IsInInterval(autoStartHour, autoStartMin, autoEndHour, autoEndMin);
   if (!isItOn && momentOn)
-    isItOn = ntp.IsInInterval(now, momentStartHour, momentStartMin, momentEndHour, momentEndMin);
+    isItOn = now.IsInInterval(momentStartHour, momentStartMin, momentEndHour, momentEndMin);
   digitalWrite(pinRelay, isItOn);
 
   // (automatsko) iskljucivanje Moment opcije odmah po isteku moment intervala
-  if (momentOn && ntp.IsItTime(now, momentEndHour, momentEndMin, 00))
+  if (momentOn && now.IsItTime(momentEndHour, momentEndMin, 00))
     momentOn = false;
+
+  // LED signal da je uskoro kraj perioda ukljucenog svetla
+  if (isItOn)
+  {
+    bool isLedOn = false;
+    if ((autoOn && now.IsInInterval(autoEndHour, autoEndMin, -20 * 60)) || (momentOn && now.IsInInterval(momentEndHour, momentEndMin, -20 * 60)))
+      isLedOn = true;
+    // bool ledBlinking = false;
+    if (isLedOn)
+    {
+      //todo blinkanje za 5min pre kraja
+    }    
+
+    digitalWrite(pinLed, !isLedOn);
+  }
 
   // serverova obrada eventualnog zahteva klijenta i gasenje WiFi-a x minuta posle paljenja aparata
   if (isWiFiOn)
@@ -230,10 +248,13 @@ void loop()
   else // WiFi OFF
   {
     // periodicno uzimanje tacnog vremena, tacno u ponoc
-    if (ntp.IsItTime(now, 00, 00, 00))
+    //B if (ntp.IsItTime(now, 00, 00, 00))
+    if (now.IsItTime(00, 00, 00))
       WiFiOn();
 
-    // na pritisnut taster pali se WiFi
+    if (btn.clicks == -1) // dugacak klik - paljenje WiFi-a
+      WiFiOn();
+    /*B
     bool btnUpNew = digitalRead(pinBtn);
     if (btnUpNew != btnUp)
     {
@@ -241,7 +262,9 @@ void loop()
       if (!btnUp)
         WiFiOn();
     }
+    */
   }
 
-  delay(200);
+  //B delay(200);
+  delay(10);
 }
