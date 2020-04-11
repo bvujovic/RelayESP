@@ -1,12 +1,11 @@
-// Paljenje i gasenje bojlera:
+// Paljenje i gasenje nekog aparata koji radi na 220V (svetlo, bojler...):
 //    1) u zadato vreme, npr. 07:00-07:30 radi, a inace je iskljucen
 //    2) momentalno paljenje, bojler se gasi posle zadatog vremena (npr. 15min)
-// Moguca poboljsanja:
-// - LED dioda koja je upaljena kada je upaljen bojler i koju vidi korisnik.
-// Ovo mozda nije neophodno ako svetlo na bojleru radi tu stvar.
-// - Rad sa vremenskim intervalima gde je start veci od end vremena, npr. 23:45 - 01:30
-// - Sleep za ESP ili gasenje WiFi-a neko vreme po paljenju aparata
-// - Opcija na veb stranici da se, odmah po pamcenju unetih vrednosti, ugasi WiFi
+// Koriscenje:
+// Paljenje i gasenje el. uredjaja kontrolisanog ovim aparatom se podesava na veb stranici http://192.168.0.x/
+// gde je x definisano u config.ini (treba da bude izmedju 30 i 39).
+// Kratki klikovi na tasteru: 1 klik -> 10 min moment-on, 2 klika -> 20 min ...
+// Dugi klik: ako WiFi nije upaljen -> pali se, ako je WiFi vec upaljen -> enable-uje se OTA updates
 
 #include <Arduino.h>
 #include <WiFiServerBasics.h>
@@ -23,13 +22,13 @@ EasyINI ei("/dat/config.ini");
 
 #include <ClickButton.h>
 // taster: startovanje WiFi-a (dugi klik), OTA update-a (dugi klik dok je WiFi ON), moment-on svetlo (kratki klikovi)
-ClickButton btn(D4, LOW, CLICKBTN_PULLUP);
+ClickButton btn(D3, LOW, CLICKBTN_PULLUP);
 
 const int pinRelay = D1; // pin na koji je povezan relej koji pusta/prekida struju ka kontrolisanom potrosacu
 #include <Blinking.h>
 Blinking blink(LED_BUILTIN); // prikaz statusa aparata
 
-#define DEBUG true
+#define DEBUG false
 
 unsigned long msWiFiStarted;             // vreme ukljucenja WiFi-a
 const unsigned long WIFI_ON = 5 * 60000; // wifi ce biti ukljucen 5min, a onda se gasi
@@ -167,7 +166,7 @@ void setup()
   WiFiOn();
 
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    blink.RefreshOTA(progress, total);
+    blink.RefreshProgressOTA(progress, total);
   });
 }
 
@@ -177,6 +176,7 @@ void loop()
 
   if (isOtaOn)
   {
+    blink.Refresh(millis());
     ArduinoOTA.handle();
     return;
   }
@@ -194,11 +194,10 @@ void loop()
     momentOn = true;
     momentStartHour = now.hour;
     momentStartMin = now.minute;
-#ifdef DEBUG
-    CalcMomentEnd(btn.clicks);
-#else
-    CalcMomentEnd(btn.clicks * 10); // svaki klik vredi 10min trajanja moment-on svetla
-#endif
+    if (DEBUG)
+      CalcMomentEnd(btn.clicks);
+    else
+      CalcMomentEnd(btn.clicks * 10); // svaki klik vredi 10min trajanja moment-on svetla
   }
 
   // ukljucivanje/iskljucivanje releja
@@ -252,6 +251,7 @@ void loop()
     if (btn.clicks == -1) // dugacak klik - startovanje OTA update-a
     {
       isOtaOn = true;
+      blink.Start(BlinkMode::EnabledOTA);
       ArduinoOTA.begin();
       msWiFiStarted = millis();
     }

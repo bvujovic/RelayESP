@@ -7,7 +7,8 @@ enum BlinkMode
 {
     None,
     WiFiConnecting,
-    OTA,
+    EnabledOTA,
+    ProgressOTA,
     NearEnd,
     VeryNearEnd,
     //todo 1/2/3 klik -> potvrda blinkanjem za produzenje moment-on ukljucenosti
@@ -26,6 +27,6 @@ public:
     Blinking(int pin);
     void Start(BlinkMode blinkMode);
     void Refresh(ulong ms);
-    void RefreshOTA(uint progress, uint total);
+    void RefreshProgressOTA(uint progress, uint total);
 
 };

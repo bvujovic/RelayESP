@@ -23,9 +23,11 @@ void Blinking::Refresh(ulong ms)
 {
     if (blinkMode == VeryNearEnd)
         digitalWrite(pin, ms % 4000 > 200);
+    if (blinkMode == EnabledOTA)
+        digitalWrite(pin, ms % 2000 > 1000);
 }
 
-void Blinking::RefreshOTA(uint progress, uint total)
+void Blinking::RefreshProgressOTA(uint progress, uint total)
 {
     uint p = 10 * progress / total; // [0, 9]
     digitalWrite(pin, p % 2);
