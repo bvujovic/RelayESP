@@ -7,6 +7,8 @@
 // Kratki klikovi na tasteru: 1 klik -> 10 min moment-on, 2 klika -> 20 min ...
 // Dugi klik: ako WiFi nije upaljen -> pali se, ako je WiFi vec upaljen -> enable-uje se OTA updates
 
+#define DEBUG false
+
 #include <Arduino.h>
 #include <WiFiServerBasics.h>
 ESP8266WebServer server(80);
@@ -15,7 +17,7 @@ ESP8266WebServer server(80);
 
 #include <SNTPtime.h>
 SNTPtime ntp;
-strDateTime now;
+StrDateTime now;
 
 #include <EasyINI.h>
 EasyINI ei("/dat/config.ini");
@@ -28,14 +30,15 @@ const int pinRelay = D1; // pin na koji je povezan relej koji pusta/prekida stru
 #include <Blinking.h>
 Blinking blink(LED_BUILTIN); // prikaz statusa aparata
 
-#define DEBUG false
-
-unsigned long msWiFiStarted;             // vreme ukljucenja WiFi-a
-const unsigned long WIFI_ON = 5 * 60000; // wifi ce biti ukljucen 5min, a onda se gasi
-bool isWiFiOn;                           // da li je wifi ukljucen ili ne
-bool isOtaOn = false;                    // da li je OTA update u toku
-const int nearEndMinutes = -20;          // koliko minuta u odnosu na gasenje releja se smatra blizu gasenja
-const int veryNearEndMinutes = -5;       // koliko minuta u odnosu na gasenje releja se smatra vrlo blizu gasenja
+ulong msWiFiStarted;               // vreme ukljucenja WiFi-a
+const ulong maxWiFiOn = 5 * 60000; // wifi ce biti ukljucen 5min, a onda se gasi
+bool isWiFiOn;                     // da li je wifi ukljucen ili ne
+bool isOtaOn = false;              // da li je aparat spreman za OTA update
+ulong msOtaStarted;                // vreme enable-ovanja OTA update-a
+const ulong noOtaTime = 5000;      // vreme (u ms) koje mora proteci od startovanja WiFi-a do enable-a OTA update-a
+const ulong maxOtaTime = 60000;    // vreme (u ms) koje ce aparat provesti u cekanju da pocne OTA update
+const int nearEndMinutes = -20;    // koliko minuta u odnosu na gasenje releja se smatra blizu gasenja
+const int veryNearEndMinutes = -5; // koliko minuta u odnosu na gasenje releja se smatra vrlo blizu gasenja
 bool autoOn, momentOn;
 int autoStartHour, autoStartMin, autoEndHour, autoEndMin;
 int momentStartHour, momentStartMin, momentEndHour, momentEndMin;
@@ -165,7 +168,7 @@ void setup()
 
   WiFiOn();
 
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+  ArduinoOTA.onProgress([](uint progress, uint total) {
     blink.RefreshProgressOTA(progress, total);
   });
 }
@@ -173,10 +176,18 @@ void setup()
 void loop()
 {
   delay(10);
+  ulong ms = millis();
 
   if (isOtaOn)
   {
-    blink.Refresh(millis());
+    // ako istekne maxOtaTime pre nego sto pocne OTA update, aparat se vraca u redovan rezim rada
+    if (ms > msOtaStarted + maxOtaTime)
+    {
+      isOtaOn = false;
+      blink.Start(BlinkMode::None);
+    }
+
+    blink.Refresh(ms);
     ArduinoOTA.handle();
     return;
   }
@@ -184,7 +195,7 @@ void loop()
   now = ntp.getTime(1.0, 1);
   if (DEBUG && now.second == 0)
   {
-    ntp.printDateTime(now);
+    now.Println();
     delay(1000);
   }
 
@@ -201,21 +212,21 @@ void loop()
   }
 
   // ukljucivanje/iskljucivanje releja
-  bool isItOn = false;
+  bool isRelayOn = false;
   if (autoOn)
-    isItOn = now.IsInInterval(autoStartHour, autoStartMin, autoEndHour, autoEndMin);
-  if (!isItOn && momentOn)
-    isItOn = now.IsInInterval(momentStartHour, momentStartMin, momentEndHour, momentEndMin);
-  digitalWrite(pinRelay, isItOn);
+    isRelayOn = now.IsInInterval(autoStartHour, autoStartMin, autoEndHour, autoEndMin);
+  if (!isRelayOn && momentOn)
+    isRelayOn = now.IsInInterval(momentStartHour, momentStartMin, momentEndHour, momentEndMin);
+  digitalWrite(pinRelay, isRelayOn);
 
   // (automatsko) iskljucivanje Moment opcije odmah po isteku moment intervala
   if (momentOn && now.IsItTime(momentEndHour, momentEndMin, 00))
     momentOn = false;
 
-  blink.Refresh(millis());
+  blink.Refresh(ms);
 
   // LED signal da je uskoro kraj perioda ukljucenog svetla
-  if (isItOn)
+  if (isRelayOn)
   {
     BlinkMode blinkMode = BlinkMode::None;
     if ((autoOn && now.IsInInterval(autoEndHour, autoEndMin, nearEndMinutes * 60)) || (momentOn && now.IsInInterval(momentEndHour, momentEndMin, nearEndMinutes * 60)))
@@ -227,12 +238,17 @@ void loop()
     // ako su auto i moment ukljuceni
     if (autoOn && momentOn && blinkMode != BlinkMode::None)
     {
-      // mozda bi trebalo videti koliko je preostalo vremena do daljeg kraja
+      blinkMode = BlinkMode::None;
       int laterEndHour = autoEndHour;
       int laterEndMin = autoEndMin;
+      if (momentEndHour > autoEndHour || (momentEndHour == autoEndHour && momentEndMin > autoEndMin))
+      {
+        laterEndHour = momentEndHour;
+        laterEndMin = momentEndMin;
+      }
       if (now.IsInInterval(laterEndHour, laterEndMin, nearEndMinutes * 60))
         blinkMode = BlinkMode::NearEnd;
-      if (now.IsInInterval(laterEndHour, laterEndMin, veryNearEndMinutes * 60))
+      if (blinkMode == BlinkMode::NearEnd && now.IsInInterval(laterEndHour, laterEndMin, veryNearEndMinutes * 60))
         blinkMode = BlinkMode::VeryNearEnd;
     }
 
@@ -245,15 +261,17 @@ void loop()
   if (isWiFiOn)
   {
     server.handleClient();
-    if (millis() > msWiFiStarted + WIFI_ON)
+    if (ms > msWiFiStarted + maxWiFiOn)
       WiFiOff();
 
-    if (btn.clicks == -1) // dugacak klik - startovanje OTA update-a
+    // dugacak klik - startovanje OTA update-a
+    // da se OTA ne bi slucajno enable-ovao uz startovanje WiFi-a, mora proci min 5 secs od ukljucivanja WiFi-a
+    if (btn.clicks == -1 && ms > msWiFiStarted + noOtaTime)
     {
       isOtaOn = true;
       blink.Start(BlinkMode::EnabledOTA);
       ArduinoOTA.begin();
-      msWiFiStarted = millis();
+      msWiFiStarted = msOtaStarted = ms;
     }
   }
   else // WiFi OFF
