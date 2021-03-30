@@ -7,12 +7,11 @@
 // Kratki klikovi na tasteru: 1 klik -> 10 min moment-on, 2 klika -> 20 min ...
 // Dugi klik: ako WiFi nije upaljen -> pali se, ako je WiFi vec upaljen -> enable-uje se OTA updates
 
-#define DEBUG false
-
 #include <Arduino.h>
 #include <WiFiServerBasics.h>
 ESP8266WebServer server(80);
 
+#include <UtilsCommon.h>
 #include <ArduinoOTA.h>
 
 #include <SNTPtime.h>
@@ -48,10 +47,14 @@ int ipLastNum;  // poslednji deo IP adrese - broj iza 192.168.0.
 void GetCurrentTime()
 {
   while (!ntp.setSNTPtime())
-    if (DEBUG)
-      Serial.print("*");
-  if (DEBUG)
-    Serial.println(" Time set");
+  {
+#ifdef DEBUG
+    Serial.print("*");
+#endif
+  }
+#ifdef DEBUG
+  Serial.println(" Time set");
+#endif
 }
 
 // "01:08" -> 1, 8
@@ -72,51 +75,50 @@ void CalcMomentEnd(int mins)
 
 void ReadConfigFile()
 {
-  ei.Open(EasyIniFileMode::Read);
-  autoOn = ei.GetInt("auto", true);
+  ei.open(EasyIniFileMode::FMOD_READ);
+  autoOn = ei.getInt("auto", true);
   if (autoOn)
   {
-    ParseTime(ei.GetString("auto_from", "12:00"), autoStartHour, autoStartMin);
-    ParseTime(ei.GetString("auto_to", "12:30"), autoEndHour, autoEndMin);
+    ParseTime(ei.getString("auto_from", "12:00"), autoStartHour, autoStartMin);
+    ParseTime(ei.getString("auto_to", "12:30"), autoEndHour, autoEndMin);
   }
   if (momentOn)
   {
-    ParseTime(ei.GetString("moment_from", "13:00"), momentStartHour, momentStartMin);
-    CalcMomentEnd(ei.GetInt("moment_mins", 15));
+    ParseTime(ei.getString("moment_from", "13:00"), momentStartHour, momentStartMin);
+    CalcMomentEnd(ei.getInt("moment_mins", 15));
   }
-  appName = ei.GetString("app_name");
-  ipLastNum = ei.GetInt("ip_last_num");
-  ei.Close();
+  appName = ei.getString("app_name");
+  ipLastNum = ei.getInt("ip_last_num");
+  ei.close();
 
-  if (DEBUG)
-  {
-    Serial.println(autoOn);
-    Serial.println(autoStartHour);
-    Serial.println(autoStartMin);
-    Serial.println(autoEndHour);
-    Serial.println(autoEndMin);
-    Serial.println(momentStartHour);
-    Serial.println(momentStartMin);
-    Serial.println(momentEndHour);
-    Serial.println(momentEndMin);
-    Serial.println(appName);
-    Serial.println(ipLastNum);
-  }
+#ifdef DEBUG
+  Serial.println(autoOn);
+  Serial.println(autoStartHour);
+  Serial.println(autoStartMin);
+  Serial.println(autoEndHour);
+  Serial.println(autoEndMin);
+  Serial.println(momentStartHour);
+  Serial.println(momentStartMin);
+  Serial.println(momentEndHour);
+  Serial.println(momentEndMin);
+  Serial.println(appName);
+  Serial.println(ipLastNum);
+#endif
 }
 
 void HandleSaveConfig()
 {
   // auto=1&auto_from=06:45&auto_to=07:20&moment=1&moment_from=22:59&moment_mins=5
-  ei.Open(EasyIniFileMode::Write);
-  ei.SetString("auto", server.arg("auto"));
-  ei.SetString("auto_from", server.arg("auto_from"));
-  ei.SetString("auto_to", server.arg("auto_to"));
+  ei.open(EasyIniFileMode::FMOD_WRITE);
+  ei.setString("auto", server.arg("auto"));
+  ei.setString("auto_from", server.arg("auto_from"));
+  ei.setString("auto_to", server.arg("auto_to"));
   momentOn = server.arg("moment") == "1";
-  ei.SetString("moment_from", server.arg("moment_from"));
-  ei.SetString("moment_mins", server.arg("moment_mins"));
-  ei.SetString("app_name", server.arg("app_name"));
-  ei.SetString("ip_last_num", server.arg("ip_last_num"));
-  ei.Close();
+  ei.setString("moment_from", server.arg("moment_from"));
+  ei.setString("moment_mins", server.arg("moment_mins"));
+  ei.setString("app_name", server.arg("app_name"));
+  ei.setString("ip_last_num", server.arg("ip_last_num"));
+  ei.close();
   ReadConfigFile();
 
   server.send(200, "text/plain", "");
@@ -163,7 +165,7 @@ void setup()
   btn.multiclickTime = 500;
 
   Serial.begin(115200);
-  SPIFFS.begin();
+  LittleFS.begin();
   ReadConfigFile();
 
   WiFiOn();
@@ -193,22 +195,26 @@ void loop()
   }
 
   now = ntp.getTime(1.0, 1);
-  if (DEBUG && now.second == 0)
+#ifdef DEBUG
+  if (now.second == 0)
   {
     now.Println();
     delay(1000);
   }
+#endif
 
   btn.Update();
   if (btn.clicks >= 1) // 1 ili vise kratkih klikova - moment-on paljenje/produzavanje svetla
   {
+    tprintln(btn.clicks);
     momentOn = true;
     momentStartHour = now.hour;
     momentStartMin = now.minute;
-    if (DEBUG)
-      CalcMomentEnd(btn.clicks);
-    else
-      CalcMomentEnd(btn.clicks * 10); // svaki klik vredi 10min trajanja moment-on svetla
+#ifdef DEBUG
+    CalcMomentEnd(btn.clicks);
+#else
+    CalcMomentEnd(btn.clicks * 10); // svaki klik vredi 10min trajanja moment-on svetla
+#endif
   }
 
   // ukljucivanje/iskljucivanje releja
