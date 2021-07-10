@@ -27,8 +27,8 @@ void Blinking::Refresh(ulong ms)
         digitalWrite(pin, ms % 2000 > 1000);
 }
 
-void Blinking::RefreshProgressOTA(uint progress, uint total)
+void Blinking::RefreshProgressOTA(ulong progress, ulong total)
 {
-    uint p = 10 * progress / total; // [0, 9]
+    ulong p = 10 * progress / total; // [0, 9]
     digitalWrite(pin, p % 2);
 }

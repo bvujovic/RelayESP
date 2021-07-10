@@ -8,6 +8,7 @@
 // Dugi klik: ako WiFi nije upaljen -> pali se, ako je WiFi vec upaljen -> enable-uje se OTA updates
 
 #include <Arduino.h>
+typedef unsigned long ulong;
 #include <WiFiServerBasics.h>
 ESP8266WebServer server(80);
 
@@ -29,32 +30,38 @@ const int pinRelay = D1; // pin na koji je povezan relej koji pusta/prekida stru
 #include <Blinking.h>
 Blinking blink(LED_BUILTIN); // prikaz statusa aparata
 
-ulong msWiFiStarted;               // vreme ukljucenja WiFi-a
-const ulong maxWiFiOn = 5 * 60000; // wifi ce biti ukljucen 5min, a onda se gasi
-bool isWiFiOn;                     // da li je wifi ukljucen ili ne
-bool isOtaOn = false;              // da li je aparat spreman za OTA update
-ulong msOtaStarted;                // vreme enable-ovanja OTA update-a
-const ulong noOtaTime = 5000;      // vreme (u ms) koje mora proteci od startovanja WiFi-a do enable-a OTA update-a
-const ulong maxOtaTime = 60000;    // vreme (u ms) koje ce aparat provesti u cekanju da pocne OTA update
-const int nearEndMinutes = -20;    // koliko minuta u odnosu na gasenje releja se smatra blizu gasenja
-const int veryNearEndMinutes = -5; // koliko minuta u odnosu na gasenje releja se smatra vrlo blizu gasenja
+const ulong SEC = 1000;                        // broj milisekundi u sekundi
+const ulong MIN = 60 * SEC;                    // broj milisekundi u minutu
+ulong msWiFiStarted;                           // vreme ukljucenja WiFi-a
+const ulong maxWiFiOn = (DEBUG ? 1 : 5) * MIN; // wifi ce biti ukljucen 5min, a onda se gasi
+bool isWiFiOn;                                 // da li je wifi ukljucen ili ne
+bool isOtaOn = false;                          // da li je aparat spreman za OTA update
+ulong msOtaStarted;                            // vreme enable-ovanja OTA update-a
+const ulong noOtaTime = 5 * SEC;               // vreme (u ms) koje mora proteci od startovanja WiFi-a do enable-a OTA update-a
+const ulong maxOtaTime = MIN;                  // vreme (u ms) koje ce aparat provesti u cekanju da pocne OTA update
+const int nearEndMinutes = -20;                // koliko minuta u odnosu na gasenje releja se smatra blizu gasenja
+const int veryNearEndMinutes = -5;             // koliko minuta u odnosu na gasenje releja se smatra vrlo blizu gasenja
 bool autoOn, momentOn;
 int autoStartHour, autoStartMin, autoEndHour, autoEndMin;
 int momentStartHour, momentStartMin, momentEndHour, momentEndMin;
 String appName; // sta pise u tabu index stranice pored "ESP Relay"
 int ipLastNum;  // poslednji deo IP adrese - broj iza 192.168.0.
+bool isTimeSet;
+ulong cntTrySetTime = 0;
+const ulong maxTrySetTime = 3;
 
 void GetCurrentTime()
 {
-  while (!ntp.setSNTPtime())
-  {
-#ifdef DEBUG
+  isTimeSet = false;
+  cntTrySetTime = 0;
+  while (!ntp.setSNTPtime() && cntTrySetTime++ < maxTrySetTime)
     Serial.print("*");
-#endif
+  Serial.println();
+  if (cntTrySetTime < maxTrySetTime)
+  {
+    isTimeSet = true;
+    Serial.println("Time set");
   }
-#ifdef DEBUG
-  Serial.println(" Time set");
-#endif
 }
 
 // "01:08" -> 1, 8
@@ -130,14 +137,28 @@ void WiFiOn()
   blink.Start(BlinkMode::WiFiConnecting);
   Serial.println("Turning WiFi ON...");
   WiFi.mode(WIFI_STA);
-  ConnectToWiFi();
+  while (!ConnectToWiFi())
+  {
+    Serial.println("Connecting to WiFi failed. Device will try to connect again...");
+    for (ulong i = 0; i < 10; i++)
+    {
+      digitalWrite(blink.GetPin(), i % 2);
+      delay(500);
+    }
+    delay(DEBUG ? 1 * MIN : 10 * MIN);
+  }
   GetCurrentTime();
   SetupIPAddress(ipLastNum);
-  server.on("/", []() { HandleDataFile(server, "/index.html", "text/html"); });
-  server.on("/inc/comp_on-off_btn1.png", []() { HandleDataFile(server, "/inc/comp_on-off_btn1.png", "image/png"); });
-  server.on("/inc/script.js", []() { HandleDataFile(server, "/inc/script.js", "text/javascript"); });
-  server.on("/inc/style.css", []() { HandleDataFile(server, "/inc/style.css", "text/css"); });
-  server.on("/dat/config.ini", []() { HandleDataFile(server, "/dat/config.ini", "text/x-csv"); });
+  server.on("/", []()
+            { HandleDataFile(server, "/index.html", "text/html"); });
+  server.on("/inc/comp_on-off_btn1.png", []()
+            { HandleDataFile(server, "/inc/comp_on-off_btn1.png", "image/png"); });
+  server.on("/inc/script.js", []()
+            { HandleDataFile(server, "/inc/script.js", "text/javascript"); });
+  server.on("/inc/style.css", []()
+            { HandleDataFile(server, "/inc/style.css", "text/css"); });
+  server.on("/dat/config.ini", []()
+            { HandleDataFile(server, "/dat/config.ini", "text/x-csv"); });
   server.on("/save_config", HandleSaveConfig);
   server.begin();
   isWiFiOn = true;
@@ -170,9 +191,8 @@ void setup()
 
   WiFiOn();
 
-  ArduinoOTA.onProgress([](uint progress, uint total) {
-    blink.RefreshProgressOTA(progress, total);
-  });
+  ArduinoOTA.onProgress([](ulong progress, ulong total)
+                        { blink.RefreshProgressOTA(progress, total); });
 }
 
 void loop()
@@ -202,6 +222,13 @@ void loop()
     delay(1000);
   }
 #endif
+  if (!isTimeSet && now.second == 0 && now.minute % 10 == 0)
+  {
+    if (isWiFiOn)
+      GetCurrentTime();
+    else
+      WiFiOn();
+  }
 
   btn.Update();
   if (btn.clicks >= 1) // 1 ili vise kratkih klikova - moment-on paljenje/produzavanje svetla

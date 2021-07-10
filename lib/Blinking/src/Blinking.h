@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+typedef unsigned long ulong;
 
 // Moguca stanja blinkanja. None - (podrazumevano) nema blinkanja.
 enum BlinkMode
@@ -27,6 +28,6 @@ public:
     Blinking(int pin);
     void Start(BlinkMode blinkMode);
     void Refresh(ulong ms);
-    void RefreshProgressOTA(uint progress, uint total);
-
+    void RefreshProgressOTA(ulong progress, ulong total);
+    int GetPin() { return pin; }
 };
