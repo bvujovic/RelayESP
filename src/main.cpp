@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 typedef unsigned long ulong;
+bool DEBUG = true;
 #include <WiFiServerBasics.h>
 ESP8266WebServer server(80);
 
@@ -33,7 +34,8 @@ Blinking blink(LED_BUILTIN); // prikaz statusa aparata
 const ulong SEC = 1000;                        // broj milisekundi u sekundi
 const ulong MIN = 60 * SEC;                    // broj milisekundi u minutu
 ulong msWiFiStarted;                           // vreme ukljucenja WiFi-a
-const ulong maxWiFiOn = (DEBUG ? 1 : 5) * MIN; // wifi ce biti ukljucen 5min, a onda se gasi
+ulong lastWebReq;                              // vreme poslednjeg cimanja veb servera
+const ulong itvWiFiOn = (DEBUG ? 1 : 5) * MIN; // wifi ce biti ukljucen 5min, a onda se gasi
 bool isWiFiOn;                                 // da li je wifi ukljucen ili ne
 bool isOtaOn = false;                          // da li je aparat spreman za OTA update
 ulong msOtaStarted;                            // vreme enable-ovanja OTA update-a
@@ -98,21 +100,40 @@ void ReadConfigFile()
   ipLastNum = ei.getInt("ip_last_num");
   ei.close();
 
-#ifdef DEBUG
-  Serial.println(autoOn);
-  Serial.println(autoStartHour);
-  Serial.println(autoStartMin);
-  Serial.println(autoEndHour);
-  Serial.println(autoEndMin);
-  Serial.println(momentStartHour);
-  Serial.println(momentStartMin);
-  Serial.println(momentEndHour);
-  Serial.println(momentEndMin);
-  Serial.println(appName);
-  Serial.println(ipLastNum);
-#endif
+  if (DEBUG)
+  {
+    Serial.println(autoOn);
+    Serial.println(autoStartHour);
+    Serial.println(autoStartMin);
+    Serial.println(autoEndHour);
+    Serial.println(autoEndMin);
+    Serial.println(momentStartHour);
+    Serial.println(momentStartMin);
+    Serial.println(momentEndHour);
+    Serial.println(momentEndMin);
+    Serial.println(appName);
+    Serial.println(ipLastNum);
+  }
 }
 
+void StartOtaUpdate()
+{
+  isOtaOn = true;
+  blink.Start(BlinkMode::EnabledOTA);
+  ArduinoOTA.begin();
+  msWiFiStarted = msOtaStarted = millis();
+}
+
+// Server vraca tekuce vreme sa kojim radi aparat.
+void HandleGetDeviceTime()
+{
+  char str[10];
+  sprintf(str, "%02d:%02d:%02d", now.hour, now.minute, now.second);
+  server.send(200, "text/plain", str);
+  lastWebReq = millis();
+}
+
+// Cuvanje config podataka prosledjenih u query stringu.
 void HandleSaveConfig()
 {
   // auto=1&auto_from=06:45&auto_to=07:20&moment=1&moment_from=22:59&moment_mins=5
@@ -127,8 +148,8 @@ void HandleSaveConfig()
   ei.setString("ip_last_num", server.arg("ip_last_num"));
   ei.close();
   ReadConfigFile();
-
-  server.send(200, "text/plain", "");
+  lastWebReq = millis();
+  SendEmptyText(server);
 }
 
 // Konektovanje na WiFi, uzimanje tacnog vremena, postavljanje IP adrese i startovanje veb servera.
@@ -145,12 +166,15 @@ void WiFiOn()
       digitalWrite(blink.GetPin(), i % 2);
       delay(500);
     }
-    delay(DEBUG ? 1 * MIN : 10 * MIN);
+    delay((DEBUG ? 1 : 10) * MIN);
   }
   GetCurrentTime();
   SetupIPAddress(ipLastNum);
   server.on("/", []()
-            { HandleDataFile(server, "/index.html", "text/html"); });
+            {
+              HandleDataFile(server, "/index.html", "text/html");
+              lastWebReq = millis();
+            });
   server.on("/inc/comp_on-off_btn1.png", []()
             { HandleDataFile(server, "/inc/comp_on-off_btn1.png", "image/png"); });
   server.on("/inc/script.js", []()
@@ -160,9 +184,16 @@ void WiFiOn()
   server.on("/dat/config.ini", []()
             { HandleDataFile(server, "/dat/config.ini", "text/x-csv"); });
   server.on("/save_config", HandleSaveConfig);
+  server.on("/getDeviceTime", HandleGetDeviceTime);
+  server.on("/otaUpdate", []()
+            {
+              server.send(200, "text/plain", "ESP is waiting for OTA updates...");
+              StartOtaUpdate();
+              lastWebReq = millis();
+            });
   server.begin();
   isWiFiOn = true;
-  msWiFiStarted = millis();
+  msWiFiStarted = lastWebReq = millis();
   Serial.println("WiFi ON");
   blink.Start(BlinkMode::None);
 }
@@ -215,13 +246,11 @@ void loop()
   }
 
   now = ntp.getTime(1.0, 1);
-#ifdef DEBUG
-  if (now.second == 0)
+  if (DEBUG && now.second == 0)
   {
     now.Println();
     delay(1000);
   }
-#endif
   if (!isTimeSet && now.second == 0 && now.minute % 10 == 0)
   {
     if (isWiFiOn)
@@ -237,11 +266,7 @@ void loop()
     momentOn = true;
     momentStartHour = now.hour;
     momentStartMin = now.minute;
-#ifdef DEBUG
-    CalcMomentEnd(btn.clicks);
-#else
-    CalcMomentEnd(btn.clicks * 10); // svaki klik vredi 10min trajanja moment-on svetla
-#endif
+    CalcMomentEnd(btn.clicks * (DEBUG ? 1 : 10)); // nije DEBUG -> svaki klik vredi 10min trajanja moment-on svetla
   }
 
   // ukljucivanje/iskljucivanje releja
@@ -294,18 +319,13 @@ void loop()
   if (isWiFiOn)
   {
     server.handleClient();
-    if (ms > msWiFiStarted + maxWiFiOn)
+    if (ms > lastWebReq + itvWiFiOn)
       WiFiOff();
 
     // dugacak klik - startovanje OTA update-a
     // da se OTA ne bi slucajno enable-ovao uz startovanje WiFi-a, mora proci min 5 secs od ukljucivanja WiFi-a
     if (btn.clicks == -1 && ms > msWiFiStarted + noOtaTime)
-    {
-      isOtaOn = true;
-      blink.Start(BlinkMode::EnabledOTA);
-      ArduinoOTA.begin();
-      msWiFiStarted = msOtaStarted = ms;
-    }
+      StartOtaUpdate();
   }
   else // WiFi OFF
   {

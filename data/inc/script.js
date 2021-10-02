@@ -104,8 +104,7 @@ var ipLastNum;
 
 function ChangeNameIp() {
     var temp = prompt('App Name', app_name);
-    if (temp != null)
-    {
+    if (temp != null) {
         app_name = temp;
         docel('h1').innerText = document.title = "ESP Relay - " + app_name;
     }
@@ -113,4 +112,17 @@ function ChangeNameIp() {
     if (temp != null && !isNaN(parseInt(temp)))
         ipLastNum = parseInt(temp);
     SaveConfig();
+}
+
+function GetDeviceTime() {
+    if (TEST)
+        spanDeviceTime.innerText = '12:34:56';
+    else {
+        var xhttp = new XMLHttpRequest();
+        xhttp.onreadystatechange = function () {
+            if (this.readyState == 4 && this.status == 200)
+                spanDeviceTime.innerText = this.responseText;
+        };
+        xhttp.open('GET', 'getDeviceTime', true); xhttp.send();
+    }
 }

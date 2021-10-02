@@ -10,8 +10,11 @@
     <title>ESP Relay</title>
 </head>
 
-<body onload='GetConfig();'>
+<body onload='GetConfig(); GetDeviceTime();'>
     <h1 id='h1'>ESP Relay</h1>
+    <p>
+        Device time: <span id='spanDeviceTime'></span>
+    </p>
     <form action="">
         <h3>
             <input type="checkbox" id='chkAuto'>
@@ -21,9 +24,6 @@
         <input type="time" id="timAutoFrom">
         to
         <input type="time" id="timAutoTo">
-        <!-- <br>
-        <input type="checkbox" id='chkShutDownWiFi'>
-        <label for="chkShutDownWiFi">Auto Shut Down WiFi After 5min</label> -->
 
         <h3>
             <input type="checkbox" id='chkMoment'>
