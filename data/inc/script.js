@@ -27,6 +27,7 @@ auto_to=07:30
 moment=0
 moment_from=01:08
 moment_mins=10
+wifi_on=5
 app_name=test light
 ip_last_num=33`;
         ParseConfig(resp);
@@ -49,6 +50,8 @@ function ParseConfig(resp) {
         const props = s.split(sepProps);
         configs.push(new Config(props[0], props[1]));
     }
+    if (TEST)
+        console.log(configs);
     DisplayConfig();
 }
 
@@ -60,6 +63,7 @@ function DisplayConfig() {
     docel('timAutoTo').value = ConfValue('auto_to');
     docel('chkMoment').checked = false;
     docel('numMoment').value = ConfValue('moment_mins');
+    docel('numWiFiOn').value = ConfValue('wifi_on');
     app_name = ConfValue('app_name');
     docel('h1').innerText = document.title = "ESP Relay - " + app_name;
     ipLastNum = parseInt(ConfValue('ip_last_num'));
@@ -83,6 +87,7 @@ function SaveConfig() {
         + 'moment' + sepProps + (docel('chkMoment').checked ? 1 : 0) + sepParams
         + 'moment_from' + sepProps + time + sepParams
         + 'moment_mins' + sepProps + docel('numMoment').value + sepParams
+        + 'wifi_on' + sepProps + docel('numWiFiOn').value + sepParams
         + 'app_name' + sepProps + app_name + sepParams
         + 'ip_last_num' + sepProps + ipLastNum
         ;

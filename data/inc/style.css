@@ -1,14 +1,14 @@
-* { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-
-h3
-{
-    margin-top: 40px;
+* {
+    background-color: #161616;
+    color: #fff;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
-#btnOk
-{
-    width: 70px;
-}
+h3 { margin-top: 40px; }
+
+#btnOk { width: 70px; }
+
+input { background-color: #111 }
 
 input[type="button"]
 {

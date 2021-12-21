@@ -9,7 +9,7 @@
 
 #include <Arduino.h>
 typedef unsigned long ulong;
-bool DEBUG = true;
+bool DEBUG = false;
 #include <WiFiServerBasics.h>
 ESP8266WebServer server(80);
 
@@ -31,18 +31,18 @@ const int pinRelay = D1; // pin na koji je povezan relej koji pusta/prekida stru
 #include <Blinking.h>
 Blinking blink(LED_BUILTIN); // prikaz statusa aparata
 
-const ulong SEC = 1000;                        // broj milisekundi u sekundi
-const ulong MIN = 60 * SEC;                    // broj milisekundi u minutu
-ulong msWiFiStarted;                           // vreme ukljucenja WiFi-a
-ulong lastWebReq;                              // vreme poslednjeg cimanja veb servera
-const ulong itvWiFiOn = (DEBUG ? 1 : 5) * MIN; // wifi ce biti ukljucen 5min, a onda se gasi
-bool isWiFiOn;                                 // da li je wifi ukljucen ili ne
-bool isOtaOn = false;                          // da li je aparat spreman za OTA update
-ulong msOtaStarted;                            // vreme enable-ovanja OTA update-a
-const ulong noOtaTime = 5 * SEC;               // vreme (u ms) koje mora proteci od startovanja WiFi-a do enable-a OTA update-a
-const ulong maxOtaTime = MIN;                  // vreme (u ms) koje ce aparat provesti u cekanju da pocne OTA update
-const int nearEndMinutes = -20;                // koliko minuta u odnosu na gasenje releja se smatra blizu gasenja
-const int veryNearEndMinutes = -5;             // koliko minuta u odnosu na gasenje releja se smatra vrlo blizu gasenja
+const ulong SEC = 1000;            // broj milisekundi u sekundi
+const ulong MIN = 60 * SEC;        // broj milisekundi u minutu
+ulong msWiFiStarted;               // vreme ukljucenja WiFi-a
+ulong lastWebReq;                  // vreme poslednjeg cimanja veb servera
+ulong itvWiFiOn = (DEBUG ? 1 : 5); // broj minuta koliko ce wifi/server biti ukljucen, a onda se gasi
+bool isWiFiOn;                     // da li je wifi ukljucen ili ne
+bool isOtaOn = false;              // da li je aparat spreman za OTA update
+ulong msOtaStarted;                // vreme enable-ovanja OTA update-a
+const ulong noOtaTime = 5 * SEC;   // vreme (u ms) koje mora proteci od startovanja WiFi-a do enable-a OTA update-a
+const ulong maxOtaTime = MIN;      // vreme (u ms) koje ce aparat provesti u cekanju da pocne OTA update
+const int nearEndMinutes = -20;    // koliko minuta u odnosu na gasenje releja se smatra blizu gasenja
+const int veryNearEndMinutes = -5; // koliko minuta u odnosu na gasenje releja se smatra vrlo blizu gasenja
 bool autoOn, momentOn;
 int autoStartHour, autoStartMin, autoEndHour, autoEndMin;
 int momentStartHour, momentStartMin, momentEndHour, momentEndMin;
@@ -96,6 +96,7 @@ void ReadConfigFile()
     ParseTime(ei.getString("moment_from", "13:00"), momentStartHour, momentStartMin);
     CalcMomentEnd(ei.getInt("moment_mins", 15));
   }
+  itvWiFiOn = ei.getInt("wifi_on", 5);
   appName = ei.getString("app_name");
   ipLastNum = ei.getInt("ip_last_num");
   ei.close();
@@ -111,6 +112,7 @@ void ReadConfigFile()
     Serial.println(momentStartMin);
     Serial.println(momentEndHour);
     Serial.println(momentEndMin);
+    Serial.println(itvWiFiOn);
     Serial.println(appName);
     Serial.println(ipLastNum);
   }
@@ -127,7 +129,7 @@ void StartOtaUpdate()
 // Server vraca tekuce vreme sa kojim radi aparat.
 void HandleGetDeviceTime()
 {
-  char str[10];
+  char str[12];
   sprintf(str, "%02d:%02d:%02d", now.hour, now.minute, now.second);
   server.send(200, "text/plain", str);
   lastWebReq = millis();
@@ -144,6 +146,7 @@ void HandleSaveConfig()
   momentOn = server.arg("moment") == "1";
   ei.setString("moment_from", server.arg("moment_from"));
   ei.setString("moment_mins", server.arg("moment_mins"));
+  ei.setString("wifi_on", server.arg("wifi_on"));
   ei.setString("app_name", server.arg("app_name"));
   ei.setString("ip_last_num", server.arg("ip_last_num"));
   ei.close();
@@ -319,7 +322,7 @@ void loop()
   if (isWiFiOn)
   {
     server.handleClient();
-    if (ms > lastWebReq + itvWiFiOn)
+    if (itvWiFiOn > 0 && ms > lastWebReq + itvWiFiOn * MIN)
       WiFiOff();
 
     // dugacak klik - startovanje OTA update-a
