@@ -131,3 +131,9 @@ function GetDeviceTime() {
         xhttp.open('GET', 'getDeviceTime', true); xhttp.send();
     }
 }
+
+function GetCurrentTime() {
+    var xhttp = new XMLHttpRequest();
+    xhttp.open('GET', 'getCurrentTime', true);
+    xhttp.send();
+}

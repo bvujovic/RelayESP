@@ -126,6 +126,12 @@ void StartOtaUpdate()
   msWiFiStarted = msOtaStarted = millis();
 }
 
+void HandleGetCurrentTime()
+{
+  GetCurrentTime();
+  SendEmptyText(server);
+}
+
 // Server vraca tekuce vreme sa kojim radi aparat.
 void HandleGetDeviceTime()
 {
@@ -188,6 +194,7 @@ void WiFiOn()
             { HandleDataFile(server, "/dat/config.ini", "text/x-csv"); });
   server.on("/save_config", HandleSaveConfig);
   server.on("/getDeviceTime", HandleGetDeviceTime);
+  server.on("/getCurrentTime", HandleGetCurrentTime);
   server.on("/otaUpdate", []()
             {
               server.send(200, "text/plain", "ESP is waiting for OTA updates...");
@@ -332,8 +339,11 @@ void loop()
   }
   else // WiFi OFF
   {
-    // periodicno uzimanje tacnog vremena, tacno u ponoc
-    if (now.IsItTime(00, 00, 00))
+    // uzimanje tacnog vremena 5min pre paljenja svetla
+    int timeCheckHour = autoStartHour;
+    int timeCheckMin = autoStartMin;
+    StrDateTime::TimeAddMin(timeCheckHour, timeCheckMin, -5);
+    if (now.IsItTime(timeCheckHour, timeCheckMin, 00))
       WiFiOn();
 
     if (btn.clicks == -1) // dugacak klik - paljenje WiFi-a
