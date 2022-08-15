@@ -12,16 +12,19 @@ typedef unsigned long ulong;
 bool DEBUG = false;
 #include <WiFiServerBasics.h>
 ESP8266WebServer server(80);
+bool isServerSet = false; // da li su nakaceni handler-i na server: zvana on() metoda za sve veb stranice
 
 #include <UtilsCommon.h>
 #include <ArduinoOTA.h>
 
-#include <SNTPtime.h>
-SNTPtime ntp;
+#include <SNTPtime.h> // https://github.com/SensorsIot/SNTPtime/
+SNTPtime *ntp = NULL;
 StrDateTime now;
 
 #include <EasyINI.h>
 EasyINI ei("/dat/config.ini");
+
+#include <EasyFS.h>
 
 #include <ClickButton.h>
 // taster: startovanje WiFi-a (dugi klik), OTA update-a (dugi klik dok je WiFi ON), moment-on svetlo (kratki klikovi)
@@ -29,7 +32,8 @@ ClickButton btn(D3, LOW, CLICKBTN_PULLUP);
 
 const int pinRelay = D1; // pin na koji je povezan relej koji pusta/prekida struju ka kontrolisanom potrosacu
 #include <Blinking.h>
-Blinking blink(LED_BUILTIN); // prikaz statusa aparata
+// B Blinking blink(D2); // prikaz statusa aparata
+Blinking *blink; // prikaz statusa aparata
 
 const ulong SEC = 1000;            // broj milisekundi u sekundi
 const ulong MIN = 60 * SEC;        // broj milisekundi u minutu
@@ -52,11 +56,23 @@ bool isTimeSet;
 ulong cntTrySetTime = 0;
 const ulong maxTrySetTime = 3;
 
+void LogMessage(const String &msg)
+{
+  char strDateTime[32];
+  sprintf(strDateTime, "%04d-%02d-%02d %02d:%02d:%02d", now.year, now.month, now.day, now.hour, now.minute, now.second);
+  EasyFS::addf(msg);
+  EasyFS::addf(strDateTime);
+}
+
 void GetCurrentTime()
 {
+  ulong start = millis();
+  if (ntp != NULL)
+    delete ntp;
+  ntp = new SNTPtime();
   isTimeSet = false;
   cntTrySetTime = 0;
-  while (!ntp.setSNTPtime() && cntTrySetTime++ < maxTrySetTime)
+  while (!ntp->setSNTPtime() && cntTrySetTime++ < maxTrySetTime)
     Serial.print("*");
   Serial.println();
   if (cntTrySetTime < maxTrySetTime)
@@ -64,6 +80,9 @@ void GetCurrentTime()
     isTimeSet = true;
     Serial.println("Time set");
   }
+  ulong msec = millis() - start;
+  now = ntp->getTime(1.0, 1);
+  LogMessage(String("GetCurrentTime: ") + msec + " ms, free: " + ESP.getFreeHeap() + " bytes");
 }
 
 // "01:08" -> 1, 8
@@ -98,7 +117,24 @@ void ReadConfigFile()
   }
   itvWiFiOn = ei.getInt("wifi_on", 5);
   appName = ei.getString("app_name");
-  ipLastNum = ei.getInt("ip_last_num");
+  appName.trim();
+  // B ipLastNum = ei.getInt("ip_last_num");
+
+  if (appName == "lil aq")
+  {
+    ipLastNum = 31;
+    blink = new Blinking(LED_BUILTIN, LOW);
+  }
+  else if (appName == "BIG AQ")
+  {
+    ipLastNum = 32;
+    blink = new Blinking(D2, HIGH);
+  }
+  else
+  {
+    ipLastNum = 30;
+    blink = new Blinking(LED_BUILTIN, LOW);
+  }
   ei.close();
 
   if (DEBUG)
@@ -121,7 +157,7 @@ void ReadConfigFile()
 void StartOtaUpdate()
 {
   isOtaOn = true;
-  blink.Start(BlinkMode::EnabledOTA);
+  blink->Start(BlinkMode::EnabledOTA);
   ArduinoOTA.begin();
   msWiFiStarted = msOtaStarted = millis();
 }
@@ -154,7 +190,7 @@ void HandleSaveConfig()
   ei.setString("moment_mins", server.arg("moment_mins"));
   ei.setString("wifi_on", server.arg("wifi_on"));
   ei.setString("app_name", server.arg("app_name"));
-  ei.setString("ip_last_num", server.arg("ip_last_num"));
+  // B ei.setString("ip_last_num", server.arg("ip_last_num"));
   ei.close();
   ReadConfigFile();
   lastWebReq = millis();
@@ -164,7 +200,7 @@ void HandleSaveConfig()
 // Konektovanje na WiFi, uzimanje tacnog vremena, postavljanje IP adrese i startovanje veb servera.
 void WiFiOn()
 {
-  blink.Start(BlinkMode::WiFiConnecting);
+  blink->Start(BlinkMode::WiFiConnecting);
   Serial.println("Turning WiFi ON...");
   WiFi.mode(WIFI_STA);
   while (!ConnectToWiFi())
@@ -172,40 +208,44 @@ void WiFiOn()
     Serial.println("Connecting to WiFi failed. Device will try to connect again...");
     for (ulong i = 0; i < 10; i++)
     {
-      digitalWrite(blink.GetPin(), i % 2);
+      digitalWrite(blink->GetPin(), i % 2);
       delay(500);
     }
     delay((DEBUG ? 1 : 10) * MIN);
   }
   GetCurrentTime();
   SetupIPAddress(ipLastNum);
-  server.on("/", []()
-            {
+  if (!isServerSet)
+  {
+    server.on("/", []()
+              {
               HandleDataFile(server, "/index.html", "text/html");
-              lastWebReq = millis();
-            });
-  server.on("/inc/comp_on-off_btn1.png", []()
-            { HandleDataFile(server, "/inc/comp_on-off_btn1.png", "image/png"); });
-  server.on("/inc/script.js", []()
-            { HandleDataFile(server, "/inc/script.js", "text/javascript"); });
-  server.on("/inc/style.css", []()
-            { HandleDataFile(server, "/inc/style.css", "text/css"); });
-  server.on("/dat/config.ini", []()
-            { HandleDataFile(server, "/dat/config.ini", "text/x-csv"); });
-  server.on("/save_config", HandleSaveConfig);
-  server.on("/getDeviceTime", HandleGetDeviceTime);
-  server.on("/getCurrentTime", HandleGetCurrentTime);
-  server.on("/otaUpdate", []()
-            {
+              lastWebReq = millis(); });
+    server.on("/inc/comp_on-off_btn1.png", []()
+              { HandleDataFile(server, "/inc/comp_on-off_btn1.png", "image/png"); });
+    server.on("/inc/script.js", []()
+              { HandleDataFile(server, "/inc/script.js", "text/javascript"); });
+    server.on("/inc/style.css", []()
+              { HandleDataFile(server, "/inc/style.css", "text/css"); });
+    server.on("/dat/config.ini", []()
+              { HandleDataFile(server, "/dat/config.ini", "text/x-csv"); });
+    server.on("/dat/msg.log", []()
+              { HandleDataFile(server, "/dat/msg.log", "text/plain"); });
+    server.on("/save_config", HandleSaveConfig);
+    server.on("/getDeviceTime", HandleGetDeviceTime);
+    server.on("/getCurrentTime", HandleGetCurrentTime);
+    server.on("/otaUpdate", []()
+              {
               server.send(200, "text/plain", "ESP is waiting for OTA updates...");
               StartOtaUpdate();
-              lastWebReq = millis();
-            });
+              lastWebReq = millis(); });
+    isServerSet = true;
+  }
   server.begin();
   isWiFiOn = true;
   msWiFiStarted = lastWebReq = millis();
   Serial.println("WiFi ON");
-  blink.Start(BlinkMode::None);
+  blink->Start(BlinkMode::None);
 }
 
 // Diskonektovanje sa WiFi-a.
@@ -229,11 +269,13 @@ void setup()
   Serial.begin(115200);
   LittleFS.begin();
   ReadConfigFile();
+  EasyFS::setFileName("/dat/msg.log");
 
   WiFiOn();
+  LogMessage("SETUP");
 
   ArduinoOTA.onProgress([](ulong progress, ulong total)
-                        { blink.RefreshProgressOTA(progress, total); });
+                        { blink->RefreshProgressOTA(progress, total); });
 }
 
 void loop()
@@ -247,15 +289,15 @@ void loop()
     if (ms > msOtaStarted + maxOtaTime)
     {
       isOtaOn = false;
-      blink.Start(BlinkMode::None);
+      blink->Start(BlinkMode::None);
     }
 
-    blink.Refresh(ms);
+    blink->Refresh(ms);
     ArduinoOTA.handle();
     return;
   }
 
-  now = ntp.getTime(1.0, 1);
+  now = ntp->getTime(1.0, 1);
   if (DEBUG && now.second == 0)
   {
     now.Println();
@@ -291,7 +333,7 @@ void loop()
   if (momentOn && now.IsItTime(momentEndHour, momentEndMin, 00))
     momentOn = false;
 
-  blink.Refresh(ms);
+  blink->Refresh(ms);
 
   // LED signal da je uskoro kraj perioda ukljucenog svetla
   if (isRelayOn)
@@ -320,10 +362,10 @@ void loop()
         blinkMode = BlinkMode::VeryNearEnd;
     }
 
-    blink.Start(blinkMode);
+    blink->Start(blinkMode);
   }
   else
-    blink.Start(BlinkMode::None);
+    blink->Start(BlinkMode::None);
 
   // serverova obrada eventualnog zahteva klijenta i gasenje WiFi-a x minuta posle paljenja aparata
   if (isWiFiOn)
@@ -339,9 +381,10 @@ void loop()
   }
   else // WiFi OFF
   {
-    // uzimanje tacnog vremena 5min pre paljenja svetla
+    // uzimanje tacnog vremena npr 5min pre paljenja svetla
     int timeCheckHour = autoStartHour;
     int timeCheckMin = autoStartMin;
+    //* random(10) umesto fiksnih 5min
     StrDateTime::TimeAddMin(timeCheckHour, timeCheckMin, -5);
     if (now.IsItTime(timeCheckHour, timeCheckMin, 00))
       WiFiOn();
