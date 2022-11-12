@@ -19,3 +19,5 @@ Turning ON and OFF an electrical appliance with this device is set via web page 
 
 ## Device - Aquarium Light
 ![RelayESP: Device - Aquarium Light](https://github.com/bvujovic/RelayESP/blob/master/docs/pics/big_aq.jpg)
+
+![RelayESP: Inside Device](https://github.com/bvujovic/RelayESP/blob/master/docs/pics/big_aq_inside.jpg)

@@ -17,9 +17,15 @@ bool isServerSet = false; // da li su nakaceni handler-i na server: zvana on() m
 #include <UtilsCommon.h>
 #include <ArduinoOTA.h>
 
-#include <SNTPtime.h> // https://github.com/SensorsIot/SNTPtime/
-SNTPtime *ntp = NULL;
-StrDateTime now;
+// B
+// #include <SNTPtime.h> // https://github.com/SensorsIot/SNTPtime/
+//  SNTPtime *ntp = NULL;
+//  StrDateTime now;
+#define MY_NTP_SERVER "rs.pool.ntp.org"
+#define MY_TZ "CET-1CEST,M3.5.0/02,M10.5.0/03"
+#include <time.h>
+time_t now;   // this is the epoch
+struct tm tm; // the structure tm holds time information in a more convient way
 
 #include <EasyINI.h>
 EasyINI ei("/dat/config.ini");
@@ -56,34 +62,84 @@ bool isTimeSet;
 ulong cntTrySetTime = 0;
 const ulong maxTrySetTime = 3;
 
+void GetTime()
+{
+  time(&now);             // read the current time
+  localtime_r(&now, &tm); // update the structure tm with the current time
+}
+
+bool IsItTime(int hour, int min, int sec)
+{
+  return tm.tm_hour == hour && tm.tm_min == min && tm.tm_sec == sec;
+}
+
+int HourMinToSecs(byte h, byte m)
+{
+  return ((h * 60) + m) * 60;
+}
+
+bool IsInIntervalSecs(int startSecs, int nowSecs, int endSecs)
+{
+  if (startSecs < endSecs)
+    return startSecs <= nowSecs && nowSecs < endSecs;
+  else
+    return startSecs <= nowSecs || nowSecs < endSecs;
+}
+
+bool IsInInterval(byte startHour, byte startMin, byte endHour, byte endMin)
+{
+  int startSecs = HourMinToSecs(startHour, startMin);
+  int endSecs = HourMinToSecs(endHour, endMin);
+  int nowSecs = HourMinToSecs(tm.tm_hour, tm.tm_min);
+  // T printf("start: %d, now: %d, end: %d \n", startSecs, nowSecs, endSecs);
+  return IsInIntervalSecs(startSecs, nowSecs, endSecs);
+}
+
+bool IsInInterval(byte refHour, byte refMin, int secs)
+{
+    int startSecs = HourMinToSecs(refHour, refMin);
+    int endSecs = startSecs + secs;
+    int nowSecs = HourMinToSecs(tm.tm_hour, tm.tm_min);
+    const int daySecs = 24 * 60 * 60;
+    if (endSecs > daySecs)
+        endSecs -= daySecs;
+    if (endSecs < 0)
+        endSecs += daySecs;
+    if (secs < 0)
+        SWAP(startSecs, endSecs, int);
+    // T printf("start: %d, end: %d, now: %d \n", startSecs, endSecs, nowSecs);
+    return IsInIntervalSecs(startSecs, nowSecs, endSecs);
+}
+
 void LogMessage(const String &msg)
 {
   char strDateTime[32];
-  sprintf(strDateTime, "%04d-%02d-%02d %02d:%02d:%02d", now.year, now.month, now.day, now.hour, now.minute, now.second);
+  sprintf(strDateTime, "%04d-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
   EasyFS::addf(msg);
   EasyFS::addf(strDateTime);
 }
 
-void GetCurrentTime()
-{
-  ulong start = millis();
-  if (ntp != NULL)
-    delete ntp;
-  ntp = new SNTPtime();
-  isTimeSet = false;
-  cntTrySetTime = 0;
-  while (!ntp->setSNTPtime() && cntTrySetTime++ < maxTrySetTime)
-    Serial.print("*");
-  Serial.println();
-  if (cntTrySetTime < maxTrySetTime)
-  {
-    isTimeSet = true;
-    Serial.println("Time set");
-  }
-  ulong msec = millis() - start;
-  now = ntp->getTime(1.0, 1);
-  LogMessage(String("GetCurrentTime: ") + msec + " ms, free: " + ESP.getFreeHeap() + " bytes");
-}
+// B
+//  void GetCurrentTime()
+//  {
+//    ulong start = millis();
+//    if (ntp != NULL)
+//      delete ntp;
+//    ntp = new SNTPtime();
+//    isTimeSet = false;
+//    cntTrySetTime = 0;
+//    while (!ntp->setSNTPtime() && cntTrySetTime++ < maxTrySetTime)
+//      Serial.print("*");
+//    Serial.println();
+//    if (cntTrySetTime < maxTrySetTime)
+//    {
+//      isTimeSet = true;
+//      Serial.println("Time set");
+//    }
+//    ulong msec = millis() - start;
+//    now = ntp->getTime(1.0, 1);
+//    LogMessage(String("GetCurrentTime: ") + msec + " ms, free: " + ESP.getFreeHeap() + " bytes");
+//  }
 
 // "01:08" -> 1, 8
 void ParseTime(String s, int &h, int &m)
@@ -118,7 +174,6 @@ void ReadConfigFile()
   itvWiFiOn = ei.getInt("wifi_on", 5);
   appName = ei.getString("app_name");
   appName.trim();
-  // B ipLastNum = ei.getInt("ip_last_num");
 
   if (appName == "lil aq")
   {
@@ -164,7 +219,7 @@ void StartOtaUpdate()
 
 void HandleGetCurrentTime()
 {
-  GetCurrentTime();
+  // B GetCurrentTime();
   SendEmptyText(server);
 }
 
@@ -172,7 +227,7 @@ void HandleGetCurrentTime()
 void HandleGetDeviceTime()
 {
   char str[12];
-  sprintf(str, "%02d:%02d:%02d", now.hour, now.minute, now.second);
+  sprintf(str, "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
   server.send(200, "text/plain", str);
   lastWebReq = millis();
 }
@@ -213,7 +268,7 @@ void WiFiOn()
     }
     delay((DEBUG ? 1 : 10) * MIN);
   }
-  GetCurrentTime();
+  // B GetCurrentTime();
   SetupIPAddress(ipLastNum);
   if (!isServerSet)
   {
@@ -270,7 +325,7 @@ void setup()
   LittleFS.begin();
   ReadConfigFile();
   EasyFS::setFileName("/dat/msg.log");
-
+  configTime(MY_TZ, MY_NTP_SERVER);
   WiFiOn();
   LogMessage("SETUP");
 
@@ -297,40 +352,47 @@ void loop()
     return;
   }
 
-  now = ntp->getTime(1.0, 1);
-  if (DEBUG && now.second == 0)
+  // B now = ntp->getTime(1.0, 1);
+  GetTime();
+  // B if (DEBUG && now.second == 0)
+  if (DEBUG && tm.tm_sec == 0)
   {
-    now.Println();
+    Serial.print("Hour:");
+    Serial.print(tm.tm_hour); // hours since midnight  0-23
+    Serial.print("\tmin:");
+    Serial.print(tm.tm_min); // minutes after the hour  0-59
+    Serial.print("\tsec:");
+    Serial.print(tm.tm_sec); // seconds after the minute  0-61*
     delay(1000);
   }
-  if (!isTimeSet && now.second == 0 && now.minute % 10 == 0)
-  {
-    if (isWiFiOn)
-      GetCurrentTime();
-    else
-      WiFiOn();
-  }
+  // if (!isTimeSet && tm.tm_sec == 0 && tm.tm_min % 10 == 0)
+  // {
+  //   if (isWiFiOn)
+  //     GetCurrentTime();
+  //   else
+  //     WiFiOn();
+  // }
 
   btn.Update();
   if (btn.clicks >= 1) // 1 ili vise kratkih klikova - moment-on paljenje/produzavanje svetla
   {
     tprintln(btn.clicks);
     momentOn = true;
-    momentStartHour = now.hour;
-    momentStartMin = now.minute;
+    momentStartHour = tm.tm_hour;
+    momentStartMin = tm.tm_min;
     CalcMomentEnd(btn.clicks * (DEBUG ? 1 : 10)); // nije DEBUG -> svaki klik vredi 10min trajanja moment-on svetla
   }
 
   // ukljucivanje/iskljucivanje releja
   bool isRelayOn = false;
   if (autoOn)
-    isRelayOn = now.IsInInterval(autoStartHour, autoStartMin, autoEndHour, autoEndMin);
+    isRelayOn = IsInInterval(autoStartHour, autoStartMin, autoEndHour, autoEndMin);
   if (!isRelayOn && momentOn)
-    isRelayOn = now.IsInInterval(momentStartHour, momentStartMin, momentEndHour, momentEndMin);
+    isRelayOn = IsInInterval(momentStartHour, momentStartMin, momentEndHour, momentEndMin);
   digitalWrite(pinRelay, isRelayOn);
 
   // (automatsko) iskljucivanje Moment opcije odmah po isteku moment intervala
-  if (momentOn && now.IsItTime(momentEndHour, momentEndMin, 00))
+  if (momentOn && IsItTime(momentEndHour, momentEndMin, 00))
     momentOn = false;
 
   blink->Refresh(ms);
@@ -339,10 +401,10 @@ void loop()
   if (isRelayOn)
   {
     BlinkMode blinkMode = BlinkMode::None;
-    if ((autoOn && now.IsInInterval(autoEndHour, autoEndMin, nearEndMinutes * 60)) || (momentOn && now.IsInInterval(momentEndHour, momentEndMin, nearEndMinutes * 60)))
+    if ((autoOn && IsInInterval(autoEndHour, autoEndMin, nearEndMinutes * 60)) || (momentOn && IsInInterval(momentEndHour, momentEndMin, nearEndMinutes * 60)))
       blinkMode = BlinkMode::NearEnd;
     if (blinkMode == BlinkMode::NearEnd) // blizu je kraj, ispitati da li je kraj jako blizu
-      if ((autoOn && now.IsInInterval(autoEndHour, autoEndMin, veryNearEndMinutes * 60)) || (momentOn && now.IsInInterval(momentEndHour, momentEndMin, veryNearEndMinutes * 60)))
+      if ((autoOn && IsInInterval(autoEndHour, autoEndMin, veryNearEndMinutes * 60)) || (momentOn && IsInInterval(momentEndHour, momentEndMin, veryNearEndMinutes * 60)))
         blinkMode = BlinkMode::VeryNearEnd;
 
     // ako su auto i moment ukljuceni
@@ -356,9 +418,9 @@ void loop()
         laterEndHour = momentEndHour;
         laterEndMin = momentEndMin;
       }
-      if (now.IsInInterval(laterEndHour, laterEndMin, nearEndMinutes * 60))
+      if (IsInInterval(laterEndHour, laterEndMin, nearEndMinutes * 60))
         blinkMode = BlinkMode::NearEnd;
-      if (blinkMode == BlinkMode::NearEnd && now.IsInInterval(laterEndHour, laterEndMin, veryNearEndMinutes * 60))
+      if (blinkMode == BlinkMode::NearEnd && IsInInterval(laterEndHour, laterEndMin, veryNearEndMinutes * 60))
         blinkMode = BlinkMode::VeryNearEnd;
     }
 
@@ -381,13 +443,21 @@ void loop()
   }
   else // WiFi OFF
   {
-    // uzimanje tacnog vremena npr 5min pre paljenja svetla
-    int timeCheckHour = autoStartHour;
-    int timeCheckMin = autoStartMin;
-    //* random(10) umesto fiksnih 5min
-    StrDateTime::TimeAddMin(timeCheckHour, timeCheckMin, -5);
-    if (now.IsItTime(timeCheckHour, timeCheckMin, 00))
-      WiFiOn();
+    // // uzimanje tacnog vremena npr 5min pre paljenja svetla
+    // int timeCheckHour = autoStartHour;
+    // int timeCheckMin = autoStartMin;
+    // //* random(10) umesto fiksnih 5min
+    // StrDateTime::TimeAddMin(timeCheckHour, timeCheckMin, -5);
+    // if (now.IsItTime(timeCheckHour, timeCheckMin, 00))
+    //   WiFiOn();
+    
+    if (tm.tm_yday % 1 == 0 && tm.tm_hour == 18 && tm.tm_sec == 0)
+    {
+        if (tm.tm_min == 45)
+            WiFiOn();
+        // if (tm.tm_min == 53)
+        //     WiFiOff();
+    }
 
     if (btn.clicks == -1) // dugacak klik - paljenje WiFi-a
       WiFiOn();
