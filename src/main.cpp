@@ -16,16 +16,24 @@ bool isServerSet = false; // da li su nakaceni handler-i na server: zvana on() m
 
 #include <UtilsCommon.h>
 #include <ArduinoOTA.h>
+void LogMessage(const String &msg);
 
-// B
-// #include <SNTPtime.h> // https://github.com/SensorsIot/SNTPtime/
-//  SNTPtime *ntp = NULL;
-//  StrDateTime now;
 #define MY_NTP_SERVER "rs.pool.ntp.org"
 #define MY_TZ "CET-1CEST,M3.5.0/02,M10.5.0/03"
 #include <time.h>
-time_t now;   // this is the epoch
-struct tm tm; // the structure tm holds time information in a more convient way
+time_t now;
+struct tm tm;
+
+#include <coredecls.h>
+void time_is_set()
+{
+  // T Serial.println("time_is_set");
+  LogMessage("time_is_set");
+}
+// uint32_t sntp_update_delay_MS_rfc_not_less_than_15000()
+// {
+//   return 10 * 60 * 1000UL; // 10 min
+// }
 
 #include <EasyINI.h>
 EasyINI ei("/dat/config.ini");
@@ -97,49 +105,27 @@ bool IsInInterval(byte startHour, byte startMin, byte endHour, byte endMin)
 
 bool IsInInterval(byte refHour, byte refMin, int secs)
 {
-    int startSecs = HourMinToSecs(refHour, refMin);
-    int endSecs = startSecs + secs;
-    int nowSecs = HourMinToSecs(tm.tm_hour, tm.tm_min);
-    const int daySecs = 24 * 60 * 60;
-    if (endSecs > daySecs)
-        endSecs -= daySecs;
-    if (endSecs < 0)
-        endSecs += daySecs;
-    if (secs < 0)
-        SWAP(startSecs, endSecs, int);
-    // T printf("start: %d, end: %d, now: %d \n", startSecs, endSecs, nowSecs);
-    return IsInIntervalSecs(startSecs, nowSecs, endSecs);
+  int startSecs = HourMinToSecs(refHour, refMin);
+  int endSecs = startSecs + secs;
+  int nowSecs = HourMinToSecs(tm.tm_hour, tm.tm_min);
+  const int daySecs = 24 * 60 * 60;
+  if (endSecs > daySecs)
+    endSecs -= daySecs;
+  if (endSecs < 0)
+    endSecs += daySecs;
+  if (secs < 0)
+    SWAP(startSecs, endSecs, int);
+  // T printf("start: %d, end: %d, now: %d \n", startSecs, endSecs, nowSecs);
+  return IsInIntervalSecs(startSecs, nowSecs, endSecs);
 }
 
 void LogMessage(const String &msg)
 {
-  char strDateTime[32];
+  char strDateTime[72];
   sprintf(strDateTime, "%04d-%02d-%02d %02d:%02d:%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec);
   EasyFS::addf(msg);
   EasyFS::addf(strDateTime);
 }
-
-// B
-//  void GetCurrentTime()
-//  {
-//    ulong start = millis();
-//    if (ntp != NULL)
-//      delete ntp;
-//    ntp = new SNTPtime();
-//    isTimeSet = false;
-//    cntTrySetTime = 0;
-//    while (!ntp->setSNTPtime() && cntTrySetTime++ < maxTrySetTime)
-//      Serial.print("*");
-//    Serial.println();
-//    if (cntTrySetTime < maxTrySetTime)
-//    {
-//      isTimeSet = true;
-//      Serial.println("Time set");
-//    }
-//    ulong msec = millis() - start;
-//    now = ntp->getTime(1.0, 1);
-//    LogMessage(String("GetCurrentTime: ") + msec + " ms, free: " + ESP.getFreeHeap() + " bytes");
-//  }
 
 // "01:08" -> 1, 8
 void ParseTime(String s, int &h, int &m)
@@ -219,7 +205,6 @@ void StartOtaUpdate()
 
 void HandleGetCurrentTime()
 {
-  // B GetCurrentTime();
   SendEmptyText(server);
 }
 
@@ -245,19 +230,21 @@ void HandleSaveConfig()
   ei.setString("moment_mins", server.arg("moment_mins"));
   ei.setString("wifi_on", server.arg("wifi_on"));
   ei.setString("app_name", server.arg("app_name"));
-  // B ei.setString("ip_last_num", server.arg("ip_last_num"));
   ei.close();
   ReadConfigFile();
   lastWebReq = millis();
   SendEmptyText(server);
 }
 
-// Konektovanje na WiFi, uzimanje tacnog vremena, postavljanje IP adrese i startovanje veb servera.
-void WiFiOn()
+// Konektovanje na WiFi [uzimanje tacnog vremena, postavljanje IP adrese i startovanje veb servera]
+void WiFiOn(bool justConnect = false)
 {
+  // T Serial.println(String("WiFiOn, justConnect: ") + justConnect);
+  LogMessage(String("WiFiOn, justConnect: ") + justConnect);
   blink->Start(BlinkMode::WiFiConnecting);
   Serial.println("Turning WiFi ON...");
   WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);
   while (!ConnectToWiFi())
   {
     Serial.println("Connecting to WiFi failed. Device will try to connect again...");
@@ -268,8 +255,15 @@ void WiFiOn()
     }
     delay((DEBUG ? 1 : 10) * MIN);
   }
-  // B GetCurrentTime();
-  SetupIPAddress(ipLastNum);
+  Serial.println("WiFi ON");
+  isWiFiOn = true;
+  msWiFiStarted = lastWebReq = millis();
+  blink->Start(BlinkMode::None);
+
+  SetupIPAddress(justConnect ? 0 : ipLastNum);
+  if (justConnect)
+    return;
+
   if (!isServerSet)
   {
     server.on("/", []()
@@ -297,10 +291,6 @@ void WiFiOn()
     isServerSet = true;
   }
   server.begin();
-  isWiFiOn = true;
-  msWiFiStarted = lastWebReq = millis();
-  Serial.println("WiFi ON");
-  blink->Start(BlinkMode::None);
 }
 
 // Diskonektovanje sa WiFi-a.
@@ -325,8 +315,9 @@ void setup()
   LittleFS.begin();
   ReadConfigFile();
   EasyFS::setFileName("/dat/msg.log");
+  settimeofday_cb(time_is_set); // T
   configTime(MY_TZ, MY_NTP_SERVER);
-  WiFiOn();
+  WiFiOn(true);
   LogMessage("SETUP");
 
   ArduinoOTA.onProgress([](ulong progress, ulong total)
@@ -352,9 +343,7 @@ void loop()
     return;
   }
 
-  // B now = ntp->getTime(1.0, 1);
   GetTime();
-  // B if (DEBUG && now.second == 0)
   if (DEBUG && tm.tm_sec == 0)
   {
     Serial.print("Hour:");
@@ -365,13 +354,6 @@ void loop()
     Serial.print(tm.tm_sec); // seconds after the minute  0-61*
     delay(1000);
   }
-  // if (!isTimeSet && tm.tm_sec == 0 && tm.tm_min % 10 == 0)
-  // {
-  //   if (isWiFiOn)
-  //     GetCurrentTime();
-  //   else
-  //     WiFiOn();
-  // }
 
   btn.Update();
   if (btn.clicks >= 1) // 1 ili vise kratkih klikova - moment-on paljenje/produzavanje svetla
@@ -443,21 +425,10 @@ void loop()
   }
   else // WiFi OFF
   {
-    // // uzimanje tacnog vremena npr 5min pre paljenja svetla
-    // int timeCheckHour = autoStartHour;
-    // int timeCheckMin = autoStartMin;
-    // //* random(10) umesto fiksnih 5min
-    // StrDateTime::TimeAddMin(timeCheckHour, timeCheckMin, -5);
-    // if (now.IsItTime(timeCheckHour, timeCheckMin, 00))
-    //   WiFiOn();
-    
-    if (tm.tm_yday % 1 == 0 && tm.tm_hour == 18 && tm.tm_sec == 0)
-    {
-        if (tm.tm_min == 45)
-            WiFiOn();
-        // if (tm.tm_min == 53)
-        //     WiFiOff();
-    }
+    // jednom nedeljno u 14:14 aparat se konektuje na WiFi zbog uzimanja tacnog vremena
+    if (tm.tm_wday == 1 && tm.tm_hour == 14 && tm.tm_min == 14 && tm.tm_sec == 0)
+        WiFiOn(true);
+      // TODO napraviti da se aparat skine sa mreze cim uzme tacno vreme (uz pomoc time_is_set)
 
     if (btn.clicks == -1) // dugacak klik - paljenje WiFi-a
       WiFiOn();
